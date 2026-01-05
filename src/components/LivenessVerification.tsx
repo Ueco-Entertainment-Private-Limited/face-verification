@@ -431,7 +431,7 @@ const LivenessVerification = () => {
       // Start BOTH frame processing AND status polling
       // Frame processing will handle real-time updates
       // Status polling is a backup check every 300ms
-      taskIntervalRef.current = setInterval(updateTaskStatus, 300);
+      // taskIntervalRef.current = setInterval(updateTaskStatus, 300);
       
     } catch (err: any) {
       addLog("❌ Error: " + err.message);
