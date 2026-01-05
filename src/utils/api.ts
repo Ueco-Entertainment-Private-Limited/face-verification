@@ -35,7 +35,7 @@ export const processFrame = async (sessionId: string, frame: string) => {
   return response.json();
 };
 
-export const startLiveness = async (sessionId: string) => {
+export const startLivenessApi = async (sessionId: string) => {
   const response = await fetch(`${API_CONFIG.BASE_URL}/liveness/${sessionId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

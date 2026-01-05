@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { addFace, searchFace } from "../utils/api";
-
-/* ---------------- CONFIG ---------------- */
-const BASE_URL = "https://itunitys.com";
-
+import { addFace, createSession, processFrame, searchFace, startLivenessApi } from "../utils/api";
 
 const LivenessVerification = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -196,31 +192,27 @@ const LivenessVerification = () => {
       ctx.drawImage(videoRef.current, 0, 0);
       const frameData = canvasRef.current.toDataURL("image/jpeg", 0.6);
 
-      const response = await fetch(`${BASE_URL}/process_frame`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, frame: frameData }),
-      });
+      const response = await processFrame(sessionId, frameData);
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const result = await response.json();
+      console.log("📦 Process Frame Response:", response);
 
-      if (result.error) {
-        if (result.error.includes('Invalid session_id')) {
+      console.log("📦 Process Frame Result:", response);
+      if (response.error) {
+        if (response.error.includes('Invalid session_id')) {
           setError('Session expired. Restart camera.');
           addLog("⚠️ Session expired");
           setIsStreaming(false);
           setDisabled(false);
         } else {
-          setError(result.error);
+          setError(response.error);
         }
       } else {
-        setDetectionResult(result);
+        setDetectionResult(response);
         setError(null);
         
         // 🔥 KEY: Check for task_session in process_frame response
-        if (result.task_session?.active && result.task_session?.current_task) {
-          const task = result.task_session.current_task;
+        if (response.task_session?.active && response.task_session?.current_task) {
+          const task = response.task_session.current_task;
           setActive(true);
           setTaskText(task.description);
           setTimer(`Time left: ${Math.floor(task.time_remaining || 0)}s`);
@@ -229,7 +221,7 @@ const LivenessVerification = () => {
         }
         
         // 🔥 Check completion in process_frame response
-        if (result.task_session && !result.task_session.active && result.task_session.result) {
+        if (response.task_session && !response.task_session.active && response.task_session.result) {
           addLog("🎉 Verification complete from process_frame!");
           verificationCompleteRef.current = true;
           
@@ -244,7 +236,7 @@ const LivenessVerification = () => {
           setTaskText("");
           setTimer("");
           
-          if (result.task_session.result.final_result) {
+          if (response.task_session.result.final_result) {
             speak("Liveness verification successful");
             addLog("✅ LIVENESS SUCCESS!");
             
@@ -292,74 +284,6 @@ const LivenessVerification = () => {
     };
   }, [isStreaming, frameLoop]);
 
-  /* ---------------- TASK STATUS POLLING (BACKUP CHECK) ---------------- */
-  // const updateTaskStatus = useCallback(async () => {
-  //   if (verificationCompleteRef.current || !sessionId) return;
-
-  //   try {
-  //     const response = await fetch(`${BASE_URL}/liveness/${sessionId}`, {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({ action: "status" }),
-  //     });
-
-  //     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  //     const data = await response.json();
-
-  //     // Log the full response to debug
-  //     console.log("📦 Status API Response:", data);
-
-  //     const status = data.session_status || data;
-
-  //     // Update UI if task is active
-  //     if (status?.active && status?.current_task) {
-  //       setActive(true);
-  //       const displayTask = status.current_task.description;
-  //       const timeLeft = Math.floor(status.current_task.time_remaining || 0);
-        
-  //       setTaskText(displayTask);
-  //       setTimer(`Time left: ${timeLeft}s`);
-        
-  //       addLog(`📋 [Status] ${displayTask} (${timeLeft}s)`);
-  //       speak(getVoiceText(displayTask));
-  //     }
-
-  //     // Check completion
-  //     if (status && !status.active && status.result) {
-  //       addLog("🎉 Verification complete from status!");
-  //       verificationCompleteRef.current = true;
-
-  //       if (taskIntervalRef.current) {
-  //         clearInterval(taskIntervalRef.current);
-  //         taskIntervalRef.current = null;
-  //       }
-
-  //       setActive(false);
-  //       setDisabled(false);
-  //       setIsStreaming(false);
-  //       setTaskText("");
-  //       setTimer("");
-
-  //       if (status.result.final_result) {
-  //         speak("Liveness verification successful");
-  //         addLog("✅ LIVENESS SUCCESS!");
-          
-  //         // 🔥 Perform face verification after successful liveness
-  //         setTimeout(() => {
-  //           performFaceVerification();
-  //         }, 1000);
-  //       } else {
-  //         speak("Liveness verification failed");
-  //         addLog("❌ LIVENESS FAILED");
-  //         alert("❌ Liveness Failed");
-  //       }
-  //     }
-  //   } catch (err: any) {
-  //     console.error("Task status error:", err);
-  //     addLog("⚠️ Status check error: " + err.message);
-  //   }
-  // }, [sessionId]);
-
   /* ---------------- START LIVENESS ---------------- */
   const startLiveness = async () => {
     setDisabled(true);
@@ -375,21 +299,16 @@ const LivenessVerification = () => {
     try {
       // 1. Create session
       addLog("Creating session...");
-      const sRes = await fetch(`${BASE_URL}/session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "create" }),
-      });
-      const sData = await sRes.json();
+      const sRes = await createSession();   
 
-      console.log("📦 Session Response:", sData);
+      console.log("📦 Session Response:", sRes);
 
-      if (!sData.success) {
+      if (!sRes.success) {
         throw new Error("Failed to create session");
       }
 
-      addLog(`✅ Session: ${sData.session_id}`);
-      setSessionId(sData.session_id);
+      addLog(`✅ Session: ${sRes.session_id}`);
+      setSessionId(sRes.session_id);
 
       // 2. Get camera access
       if (!(await getUserMedia())) {
@@ -412,26 +331,15 @@ const LivenessVerification = () => {
 
       // 4. Start liveness task
       addLog("Starting liveness...");
-      const lRes = await fetch(`${BASE_URL}/liveness/${sData.session_id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start" }),
-      });
-
-      const lData = await lRes.json();
-      console.log("📦 Liveness Start Response:", lData);
+      const lRes = await startLivenessApi(sRes.session_id);
+      console.log("📦 Liveness Start Response:", lRes);
       
-      if (!lData.success) {
-        throw new Error(lData.message || "Failed to start liveness");
+      if (!lRes.success) {
+        throw new Error(lRes.message || "Failed to start liveness");
       }
 
       addLog("✅ Liveness started");
       setIsStreaming(true);
-
-      // Start BOTH frame processing AND status polling
-      // Frame processing will handle real-time updates
-      // Status polling is a backup check every 300ms
-      // taskIntervalRef.current = setInterval(updateTaskStatus, 300);
       
     } catch (err: any) {
       addLog("❌ Error: " + err.message);
