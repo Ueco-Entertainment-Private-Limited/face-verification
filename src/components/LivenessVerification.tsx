@@ -36,8 +36,8 @@ const LivenessVerification = () => {
   }, []);
 
   /* ---------------- TASK MIRROR (DISPLAY ONLY) ---------------- */
-  const getDisplayTask = (text: string) =>
-    text.replace(/Look Left/i, "Look Right").replace(/Look Right/i, "Look Left");
+  // const getDisplayTask = (text: string) =>
+  //   text.replace(/Look Left/i, "Look Right").replace(/Look Right/i, "Look Left");
 
   /* ---------------- VOICE ---------------- */
   let femaleVoice: SpeechSynthesisVoice | null = null;
@@ -110,7 +110,7 @@ const LivenessVerification = () => {
     });
     const sData = await sRes.json();
 
-    console.log("Create Session Response:", sRes);
+    console.log("Create Session Response:",sData );
 
     // 2️⃣ capture photo ONCE
     capturedImageRef.current = await capturePhotoOnce();
@@ -144,15 +144,13 @@ const LivenessVerification = () => {
 
       const data = await res.json();
 
-      console.log("Process Frame Response:", res);
+      console.log("Process Frame Response:", data);
 
       /* ---------------- TASK ACTIVE ---------------- */
 
       if (data.task_session?.active) {
         setActive(true);
-        const displayTask = getDisplayTask(
-          data.task_session.current_task.description
-        );
+        const displayTask = data.task_session.current_task.description;
         setTaskText(displayTask);
         setTimer(
           `Time left: ${Math.floor(
