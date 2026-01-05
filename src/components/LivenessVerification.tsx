@@ -116,7 +116,7 @@ const LivenessVerification = () => {
           userId: searchRes.matched_user_id,
           confidence: searchRes.confidence,
         });
-        alert(`👤 Welcome back! User: ${searchRes.matched_user_id}`);
+        // alert(`👤 Welcome back! User: ${searchRes.matched_user_id}`);
       } else {
         // Add new face
         addLog("➕ Adding new face...");
@@ -430,8 +430,8 @@ const LivenessVerification = () => {
 
       // Start BOTH frame processing AND status polling
       // Frame processing will handle real-time updates
-      // Status polling is a backup check every 100ms
-      taskIntervalRef.current = setInterval(updateTaskStatus, 100);
+      // Status polling is a backup check every 300ms
+      taskIntervalRef.current = setInterval(updateTaskStatus, 300);
       
     } catch (err: any) {
       addLog("❌ Error: " + err.message);
@@ -456,13 +456,15 @@ const LivenessVerification = () => {
 
   /* ---------------- UI ---------------- */
   return (
-    <div style={styles.body}>
+ <div style={styles.body}>
       <div style={styles.container}>
-        <div style={styles.title}>Face Liveness Verification</div>
-        <div style={styles.instruction}>Follow the on-screen instructions</div>
+        <div style={styles.header}>
+          <div style={styles.title}>🎭 Face Liveness Verification</div>
+          <div style={styles.instruction}>Follow the on-screen instructions</div>
+        </div>
 
         <div style={styles.cameraWrapper}>
-          <video ref={videoRef} autoPlay playsInline style={styles.video} />
+          <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
           <div
             style={{
               ...styles.ring,
@@ -481,79 +483,69 @@ const LivenessVerification = () => {
 
         {error && <div style={styles.error}>{error}</div>}
 
-        {/* Status Log */}
-        <div style={styles.logContainer}>
-          <div style={styles.logTitle}>📊 Status Log:</div>
-          {statusLog.length === 0 ? (
-            <div style={styles.logItem}>Waiting...</div>
-          ) : (
-            statusLog.map((log, i) => (
-              <div key={i} style={styles.logItem}>{log}</div>
-            ))
+        <div style={styles.bottomSection}>
+          {/* Detection Info */}
+          {detectionResult && (
+            <div style={styles.detectionInfo}>
+              <div style={styles.detectionItem}>
+                Face: {detectionResult.face_detected ? "✅" : "❌"}
+              </div>
+              {detectionResult.is_real !== undefined && (
+                <div style={styles.detectionItem}>
+                  Real: {detectionResult.is_real ? "✅" : "❌"} 
+                  ({Math.round((detectionResult.confidence || 0) * 100)}%)
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            disabled={disabled}
+            onClick={startLiveness}
+            style={{
+              ...styles.button,
+              background: disabled ? "#9ca3af" : "#2563eb",
+              cursor: disabled ? "not-allowed" : "pointer",
+            }}
+          >
+            {disabled ? "⏳ Processing..." : "🚀 Start Verification"}
+          </button>
+
+          {/* Status Log */}
+          <div style={styles.logContainer}>
+            <div style={styles.logTitle}>📊 Status Log:</div>
+            {statusLog.length === 0 ? (
+              <div style={styles.logItem}>Ready to start...</div>
+            ) : (
+              statusLog.map((log, i) => (
+                <div key={i} style={styles.logItem}>{log}</div>
+              ))
+            )}
+          </div>
+
+          {previewUrl && (
+            <div style={styles.previewSection}>
+              <p style={styles.previewTitle}>📸 Captured Image</p>
+              <img src={previewUrl} alt="Captured" style={styles.previewImage} />
+            </div>
+          )}
+
+          {faceVerificationResult && (
+            <div style={styles.faceResult}>
+              <div style={styles.faceResultTitle}>
+                {faceVerificationResult.type === "existing" ? "👤 Existing User" : "🆕 New User"}
+              </div>
+              <div style={styles.faceResultDetail}>
+                User ID: {faceVerificationResult.userId}
+              </div>
+              {faceVerificationResult.confidence && (
+                <div style={styles.faceResultDetail}>
+                  Confidence: {Math.round(faceVerificationResult.confidence * 100)}%
+                </div>
+              )}
+            </div>
           )}
         </div>
-
-        {/* Detection Info */}
-        {detectionResult && (
-          <div style={styles.detectionInfo}>
-            <div style={styles.detectionItem}>
-              Face: {detectionResult.face_detected ? "✅" : "❌"}
-            </div>
-            {detectionResult.is_real !== undefined && (
-              <div style={styles.detectionItem}>
-                Real: {detectionResult.is_real ? "✅" : "❌"} 
-                ({Math.round((detectionResult.confidence || 0) * 100)}%)
-              </div>
-            )}
-          </div>
-        )}
-
-        <button
-          disabled={disabled}
-          onClick={startLiveness}
-          style={{
-            ...styles.button,
-            background: disabled ? "#9ca3af" : "#2563eb",
-            cursor: disabled ? "not-allowed" : "pointer",
-          }}
-        >
-          {disabled ? "Processing..." : "Start Liveness"}
-        </button>
-
-        {previewUrl && (
-          <div style={{ marginTop: 16 }}>
-            <p style={{ fontSize: 12, color: "#6b7280", fontWeight: 600 }}>
-              📸 Captured Image
-            </p>
-            <img
-              src={previewUrl}
-              alt="Captured"
-              style={{
-                width: 120,
-                borderRadius: 8,
-                marginTop: 6,
-                border: "2px solid #e5e7eb",
-              }}
-            />
-          </div>
-        )}
-
-        {/* Face Verification Result */}
-        {faceVerificationResult && (
-          <div style={styles.faceResult}>
-            <div style={styles.faceResultTitle}>
-              {faceVerificationResult.type === "existing" ? "👤 Existing User" : "🆕 New User"}
-            </div>
-            <div style={styles.faceResultDetail}>
-              User ID: {faceVerificationResult.userId}
-            </div>
-            {faceVerificationResult.confidence && (
-              <div style={styles.faceResultDetail}>
-                Confidence: {Math.round(faceVerificationResult.confidence * 100)}%
-              </div>
-            )}
-          </div>
-        )}
 
         <canvas
           ref={canvasRef}
@@ -570,42 +562,46 @@ const styles: any = {
   body: {
     margin: 0,
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto',
-    background: "#f9fafb",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
     color: "#111827",
-    textAlign: "center",
     minHeight: "100vh",
     display: "flex",
     justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
+    alignItems: "flex-start",
+    padding: "20px",
+    paddingTop: "40px",
   },
   container: { 
-    padding: 20,
-    maxWidth: 420,
+    width: "100%",
+    maxWidth: 480,
     background: "#fff",
-    borderRadius: 16,
-    boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+    borderRadius: 24,
+    boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+    overflow: "hidden",
+  },
+  header: {
+    padding: "24px 20px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "#fff",
   },
   title: { 
-    fontSize: 20, 
-    marginBottom: 6, 
+    fontSize: 24, 
+    marginBottom: 8, 
     fontWeight: 700,
-    color: "#1f2937",
   },
   instruction: { 
-    fontSize: 14, 
-    color: "#6b7280", 
-    marginBottom: 20,
+    fontSize: 15, 
+    opacity: 0.95,
   },
   cameraWrapper: {
     position: "relative",
-    width: 280,
-    height: 280,
-    margin: "0 auto",
+    width: 360,
+    height: 360,
+    margin: "30px auto",
     borderRadius: "50%",
     overflow: "hidden",
     background: "#000",
-    boxShadow: "0 8px 16px rgba(0,0,0,0.2)",
+    boxShadow: "0 12px 24px rgba(0,0,0,0.3)",
   },
   video: {
     width: "100%",
@@ -617,81 +613,103 @@ const styles: any = {
     position: "absolute",
     inset: 8,
     borderRadius: "50%",
-    border: "6px solid",
+    border: "8px solid",
     transition: "border-color 0.3s",
+    boxShadow: "inset 0 0 20px rgba(0,0,0,0.2)",
   },
   task: {
-    marginTop: 20,
-    fontSize: 20,
+    marginTop: 24,
+    fontSize: 22,
     color: "#f59e0b",
     fontWeight: 700,
     minHeight: 30,
+    textAlign: "center",
+    padding: "0 20px",
   },
   timer: { 
-    fontSize: 16, 
+    fontSize: 17, 
     color: "#6b7280", 
     marginTop: 8,
     fontWeight: 600,
+    textAlign: "center",
   },
   error: {
-    marginTop: 12,
+    margin: "12px 20px",
     fontSize: 13,
     color: "#dc2626",
-    padding: 10,
+    padding: 12,
     background: "#fee2e2",
     borderRadius: 8,
     fontWeight: 500,
   },
-  logContainer: {
-    marginTop: 16,
-    padding: 12,
-    background: "#f3f4f6",
-    borderRadius: 8,
-    maxHeight: 140,
-    overflow: "auto",
-    fontSize: 11,
-    textAlign: "left",
-    border: "1px solid #e5e7eb",
-  },
-  logTitle: {
-    fontWeight: 700,
-    marginBottom: 6,
-    color: "#374151",
-  },
-  logItem: {
-    marginBottom: 3,
-    color: "#4b5563",
-    fontFamily: "monospace",
-    lineHeight: 1.4,
+  bottomSection: {
+    padding: "0 20px 20px",
   },
   detectionInfo: {
-    marginTop: 12,
+    marginBottom: 16,
     display: "flex",
     gap: 12,
     justifyContent: "center",
     fontSize: 12,
   },
   detectionItem: {
-    padding: "4px 8px",
+    padding: "6px 12px",
     background: "#f3f4f6",
     borderRadius: 6,
     fontWeight: 600,
     color: "#374151",
   },
   button: {
-    marginTop: 24,
     width: "100%",
-    padding: 16,
+    padding: 18,
     border: "none",
     borderRadius: 12,
     color: "#fff",
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: 700,
     transition: "all 0.2s",
+    marginBottom: 16,
+  },
+  logContainer: {
+    padding: 14,
+    background: "#f9fafb",
+    borderRadius: 10,
+    maxHeight: 160,
+    overflow: "auto",
+    fontSize: 10,
+    textAlign: "left",
+    border: "1px solid #e5e7eb",
+  },
+  logTitle: {
+    fontWeight: 700,
+    marginBottom: 8,
+    color: "#374151",
+    fontSize: 11,
+  },
+  logItem: {
+    marginBottom: 4,
+    color: "#4b5563",
+    fontFamily: "monospace",
+    lineHeight: 1.5,
+  },
+  previewSection: {
+    marginTop: 16,
+    textAlign: "center",
+  },
+  previewTitle: {
+    fontSize: 12,
+    color: "#6b7280",
+    fontWeight: 600,
+    marginBottom: 8,
+  },
+  previewImage: {
+    width: 100,
+    borderRadius: 8,
+    border: "2px solid #e5e7eb",
   },
   faceResult: {
     marginTop: 16,
-    padding: 16,
+    padding: 18,
     background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
     borderRadius: 12,
     color: "#fff",
@@ -699,11 +717,11 @@ const styles: any = {
   faceResultTitle: {
     fontSize: 18,
     fontWeight: 700,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   faceResultDetail: {
     fontSize: 14,
-    marginTop: 4,
+    marginTop: 5,
     opacity: 0.95,
   },
 };
