@@ -1,43 +1,39 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { addFace, searchFace } from "../utils/api";
 
 /* ---------------- CONFIG ---------------- */
 const BASE_URL = "https://itunitys.com";
-// const BASE_URL = "http://15.206.8.45"; // production
+
 
 const LivenessVerification = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const intervalRef = useRef<any>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const taskIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const processingFrameRef = useRef(false);
+  const lastFrameTimeRef = useRef(0);
+  const verificationCompleteRef = useRef(false);
+  const capturedImageRef = useRef<string | null>(null);
 
-  const capturedImageRef = useRef<Blob | null>(null);
-
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [taskText, setTaskText] = useState("");
   const [timer, setTimer] = useState("");
   const [active, setActive] = useState(false);
   const [disabled, setDisabled] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [statusLog, setStatusLog] = useState<string[]>([]);
+  const [detectionResult, setDetectionResult] = useState<any>(null);
 
-  // 👉 testing purpose
+  // Preview for testing
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [faceVerificationResult, setFaceVerificationResult] = useState<any>(null);
+  const faceVerificationTriggeredRef = useRef(false);
 
-  /* ---------------- CAMERA ---------------- */
-  useEffect(() => {
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: "user" } })
-      .then(stream => {
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      })
-      .catch(err => alert("Camera error: " + err));
-
-    return () => {
-      clearInterval(intervalRef.current);
-      window.speechSynthesis.cancel();
-    };
-  }, []);
-
-  /* ---------------- TASK MIRROR (DISPLAY ONLY) ---------------- */
-  // const getDisplayTask = (text: string) =>
-  //   text.replace(/Look Left/i, "Look Right").replace(/Look Right/i, "Look Left");
+  const addLog = (msg: string) => {
+    console.log(msg);
+    setStatusLog(prev => [...prev.slice(-5), `${new Date().toLocaleTimeString()}: ${msg}`]);
+  };
 
   /* ---------------- VOICE ---------------- */
   let femaleVoice: SpeechSynthesisVoice | null = null;
@@ -48,19 +44,19 @@ const LivenessVerification = () => {
       voices.find(v => v.name.includes("Female")) ||
       voices.find(v => v.name.includes("Google")) ||
       voices.find(v => v.name.includes("Samantha")) ||
-      voices.find(v => v.name.includes("Zira")) ||
       voices.find(v => v.lang === "en-US") ||
       voices[0];
   };
 
-  window.speechSynthesis.onvoiceschanged = loadVoices;
-  loadVoices();
+  if (typeof window !== 'undefined') {
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+    loadVoices();
+  }
 
   let lastSpoken = "";
   const speak = (text: string) => {
     if (!text || lastSpoken === text) return;
     lastSpoken = text;
-
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     if (femaleVoice) u.voice = femaleVoice;
@@ -78,139 +74,395 @@ const LivenessVerification = () => {
     return "";
   };
 
-  /* ---------------- PHOTO CAPTURE (NON-MIRRORED) ---------------- */
-  const capturePhotoOnce = async (): Promise<Blob | null> => {
-    if (!canvasRef.current || !videoRef.current) return null;
+  /* ---------------- FACE VERIFICATION ---------------- */
+  const performFaceVerification = useCallback(async () => {
+    if (!capturedImageRef.current) {
+      addLog("❌ No captured image for verification");
+      return;
+    }
 
-    const ctx = canvasRef.current.getContext("2d")!;
-    ctx.drawImage(videoRef.current, 0, 0, 320, 240);
+    if (faceVerificationTriggeredRef.current) {
+      addLog("⚠️ Face verification already triggered");
+      return;
+    }
 
-    return new Promise(resolve => {
-      canvasRef.current!.toBlob(blob => {
-        if (blob) {
-          // 👉 testing preview
-          setPreviewUrl(URL.createObjectURL(blob));
-          resolve(blob);
-        } else {
-          resolve(null);
-        }
-      }, "image/jpeg");
-    });
-  };
+    faceVerificationTriggeredRef.current = true;
+    addLog("🔍 Starting face verification...");
 
-  /* ---------------- START ---------------- */
-  const startLiveness = async () => {
-    setDisabled(true);
+    try {
+      // Convert base64 to Blob
+      const base64Data = capturedImageRef.current.split(',')[1];
+      const byteCharacters = atob(base64Data);
+      const byteArrays = [];
+      
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteArrays.push(byteCharacters.charCodeAt(i));
+      }
+      
+      const byteArray = new Uint8Array(byteArrays);
+      const imageBlob = new Blob([byteArray], { type: 'image/jpeg' });
 
-    // 1️⃣ create session
-    const sRes = await fetch(`${BASE_URL}/session`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "create" }),
-    });
-    const sData = await sRes.json();
+      // Search for existing face
+      addLog("🔎 Searching for existing face...");
+      const searchRes = await searchFace(imageBlob);
+      
+      console.log("📦 Search Face Response:", searchRes);
 
-    console.log("Create Session Response:",sData );
+      if (searchRes.matched_user_id) {
+        addLog(`✅ Face found: ${searchRes.matched_user_id}`);
+        speak("Face already exists");
+        setFaceVerificationResult({
+          type: "existing",
+          userId: searchRes.matched_user_id,
+          confidence: searchRes.confidence,
+        });
+        alert(`👤 Welcome back! User: ${searchRes.matched_user_id}`);
+      } else {
+        // Add new face
+        addLog("➕ Adding new face...");
+        const name = `User_${Date.now()}`;
+        const addRes = await addFace(name, imageBlob, {
+          source: "web_liveness",
+          created_at: new Date().toISOString(),
+        });
+        
+        console.log("📦 Add Face Response:", addRes);
+        
+        addLog(`✅ New user created: ${addRes.data.person_id}`);
+        speak("Face registered successfully");
+        setFaceVerificationResult({
+          type: "new",
+          userId: addRes.data.person_id,
+          name: name,
+        });
+        alert(`🆕 New User Created: ${addRes.data.person_id}`);
+      }
+    } catch (error: any) {
+      addLog(`❌ Face verification error: ${error.message}`);
+      console.error("Face verification error:", error);
+      setError("Face verification failed: " + error.message);
+    }
+  }, []);
 
-    // 2️⃣ capture photo ONCE
-    capturedImageRef.current = await capturePhotoOnce();
-
-    // 3️⃣ start liveness
-    const lRes = await fetch(`${BASE_URL}/liveness/${sData.session_id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "start" }),
-    });
-
-    console.log("Start Liveness Response:", lRes);
-    startFrameLoop(sData.session_id);
-  };
-
-  /* ---------------- FRAME LOOP (NON-MIRRORED) ---------------- */
-  const startFrameLoop = (sid: string) => {
-    intervalRef.current = setInterval(async () => {
-      if (!videoRef.current || !canvasRef.current) return;
-
-      const ctx = canvasRef.current.getContext("2d")!;
-      ctx.drawImage(videoRef.current, 0, 0, 320, 240);
-
-      const frame = canvasRef.current.toDataURL("image/jpeg");
-
-      const res = await fetch(`${BASE_URL}/process_frame`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sid, frame }),
+  /* ---------------- CAMERA SETUP ---------------- */
+  const getUserMedia = useCallback(async (): Promise<boolean> => {
+    try {
+      addLog("Requesting camera access...");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+        audio: false,
       });
 
-      const data = await res.json();
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await new Promise<void>((resolve, reject) => {
+          videoRef.current!.onloadedmetadata = () => {
+            if (canvasRef.current && videoRef.current) {
+              canvasRef.current.width = videoRef.current.videoWidth;
+              canvasRef.current.height = videoRef.current.videoHeight;
+            }
+            addLog("✅ Camera ready");
+            resolve();
+          };
+          videoRef.current!.onerror = reject;
+          setTimeout(() => reject(new Error("Camera timeout")), 10000);
+        });
+      }
+      return true;
+    } catch (err: any) {
+      addLog("❌ Camera error: " + err.message);
+      setError("Camera access denied: " + err.message);
+      return false;
+    }
+  }, []);
 
-      console.log("Process Frame Response:", data);
+  /* ---------------- FRAME PROCESSING (LIKE NEXT.JS VERSION) ---------------- */
+  const captureAndProcessFrame = useCallback(async () => {
+    if (!sessionId || !videoRef.current || !canvasRef.current) return;
+    if (videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA) return;
+    if (processingFrameRef.current) return;
 
-      /* ---------------- TASK ACTIVE ---------------- */
+    const now = Date.now();
+    const timeSinceLastFrame = now - lastFrameTimeRef.current;
 
-      if (data.task_session?.active) {
+    // 50ms throttle like Next.js version
+    if (timeSinceLastFrame < 50) return;
+
+    try {
+      processingFrameRef.current = true;
+      lastFrameTimeRef.current = now;
+
+      const ctx = canvasRef.current.getContext("2d")!;
+      ctx.drawImage(videoRef.current, 0, 0);
+      const frameData = canvasRef.current.toDataURL("image/jpeg", 0.6);
+
+      const response = await fetch(`${BASE_URL}/process_frame`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, frame: frameData }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const result = await response.json();
+
+      if (result.error) {
+        if (result.error.includes('Invalid session_id')) {
+          setError('Session expired. Restart camera.');
+          addLog("⚠️ Session expired");
+          setIsStreaming(false);
+          setDisabled(false);
+        } else {
+          setError(result.error);
+        }
+      } else {
+        setDetectionResult(result);
+        setError(null);
+        
+        // 🔥 KEY: Check for task_session in process_frame response
+        if (result.task_session?.active && result.task_session?.current_task) {
+          const task = result.task_session.current_task;
+          setActive(true);
+          setTaskText(task.description);
+          setTimer(`Time left: ${Math.floor(task.time_remaining || 0)}s`);
+          addLog(`📋 ${task.description} (${Math.floor(task.time_remaining || 0)}s)`);
+          speak(getVoiceText(task.description));
+        }
+        
+        // 🔥 Check completion in process_frame response
+        if (result.task_session && !result.task_session.active && result.task_session.result) {
+          addLog("🎉 Verification complete from process_frame!");
+          verificationCompleteRef.current = true;
+          
+          if (taskIntervalRef.current) {
+            clearInterval(taskIntervalRef.current);
+            taskIntervalRef.current = null;
+          }
+          
+          setActive(false);
+          setDisabled(false);
+          setIsStreaming(false);
+          setTaskText("");
+          setTimer("");
+          
+          if (result.task_session.result.final_result) {
+            speak("Liveness verification successful");
+            addLog("✅ LIVENESS SUCCESS!");
+            
+            // 🔥 Perform face verification after successful liveness
+            setTimeout(() => {
+              performFaceVerification();
+            }, 1000);
+          } else {
+            speak("Liveness verification failed");
+            addLog("❌ LIVENESS FAILED");
+            alert("❌ Liveness Failed");
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("Frame processing error:", err);
+    } finally {
+      processingFrameRef.current = false;
+    }
+  }, [sessionId]);
+
+  /* ---------------- CONTINUOUS FRAME LOOP ---------------- */
+  const frameLoop = useCallback(() => {
+    captureAndProcessFrame();
+    if (isStreaming) {
+      animationFrameRef.current = requestAnimationFrame(frameLoop);
+    }
+  }, [isStreaming, captureAndProcessFrame]);
+
+  useEffect(() => {
+    if (isStreaming) {
+      lastFrameTimeRef.current = Date.now();
+      animationFrameRef.current = requestAnimationFrame(frameLoop);
+    } else {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    }
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isStreaming, frameLoop]);
+
+  /* ---------------- TASK STATUS POLLING (BACKUP CHECK) ---------------- */
+  const updateTaskStatus = useCallback(async () => {
+    if (verificationCompleteRef.current || !sessionId) return;
+
+    try {
+      const response = await fetch(`${BASE_URL}/liveness/${sessionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "status" }),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      // Log the full response to debug
+      console.log("📦 Status API Response:", data);
+
+      const status = data.session_status || data;
+
+      // Update UI if task is active
+      if (status?.active && status?.current_task) {
         setActive(true);
-        const displayTask = data.task_session.current_task.description;
+        const displayTask = status.current_task.description;
+        const timeLeft = Math.floor(status.current_task.time_remaining || 0);
+        
         setTaskText(displayTask);
-        setTimer(
-          `Time left: ${Math.floor(
-            data.task_session.current_task.time_remaining
-          )}s`
-        );
+        setTimer(`Time left: ${timeLeft}s`);
+        
+        addLog(`📋 [Status] ${displayTask} (${timeLeft}s)`);
         speak(getVoiceText(displayTask));
       }
 
-      /* ---------------- LIVENESS COMPLETE ---------------- */
-      if (!data.task_session?.active && data.task_session?.result) {
-        clearInterval(intervalRef.current);
+      // Check completion
+      if (status && !status.active && status.result) {
+        addLog("🎉 Verification complete from status!");
+        verificationCompleteRef.current = true;
+
+        if (taskIntervalRef.current) {
+          clearInterval(taskIntervalRef.current);
+          taskIntervalRef.current = null;
+        }
+
         setActive(false);
+        setDisabled(false);
+        setIsStreaming(false);
         setTaskText("");
         setTimer("");
-        setDisabled(false);
 
-        if (data.task_session.result.final_result) {
+        if (status.result.final_result) {
           speak("Liveness verification successful");
-          alert("✅ Liveness Successful");
-
-          // 👉 search & add face
-
-          const imageBlob = capturedImageRef.current!;
-          const searchRes = await searchFace(imageBlob);
-
-          if (searchRes.matched_user_id) {
-            speak("Face already exists");
-            alert(`👤 Face already exists: ${searchRes.matched_user_id}`);
-          } else {
-            const name = `User_${Date.now()}`;
-            const addRes = await addFace(name, imageBlob, {
-              source: "web_liveness",
-              created_at: new Date().toISOString(),
-            });
-            speak("Face registered successfully");
-            alert(`🆕 New User Created: ${addRes.data.person_id}`);
-          }
+          addLog("✅ LIVENESS SUCCESS!");
+          
+          // 🔥 Perform face verification after successful liveness
+          setTimeout(() => {
+            performFaceVerification();
+          }, 1000);
         } else {
           speak("Liveness verification failed");
+          addLog("❌ LIVENESS FAILED");
           alert("❌ Liveness Failed");
         }
       }
-    }, 800);
+    } catch (err: any) {
+      console.error("Task status error:", err);
+      addLog("⚠️ Status check error: " + err.message);
+    }
+  }, [sessionId]);
+
+  /* ---------------- START LIVENESS ---------------- */
+  const startLiveness = async () => {
+    setDisabled(true);
+    setError(null);
+    verificationCompleteRef.current = false;
+    faceVerificationTriggeredRef.current = false;
+    setFaceVerificationResult(null);
+    setStatusLog([]);
+    setTaskText("");
+    setTimer("");
+    setActive(false);
+
+    try {
+      // 1. Create session
+      addLog("Creating session...");
+      const sRes = await fetch(`${BASE_URL}/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create" }),
+      });
+      const sData = await sRes.json();
+
+      console.log("📦 Session Response:", sData);
+
+      if (!sData.success) {
+        throw new Error("Failed to create session");
+      }
+
+      addLog(`✅ Session: ${sData.session_id}`);
+      setSessionId(sData.session_id);
+
+      // 2. Get camera access
+      if (!(await getUserMedia())) {
+        setDisabled(false);
+        return;
+      }
+
+      // Wait for camera to stabilize
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 3. Capture initial image
+      if (videoRef.current && canvasRef.current) {
+        const ctx = canvasRef.current.getContext("2d")!;
+        ctx.drawImage(videoRef.current, 0, 0);
+        const frameData = canvasRef.current.toDataURL("image/jpeg", 0.8);
+        capturedImageRef.current = frameData;
+        setPreviewUrl(frameData);
+        addLog("📸 Image captured");
+      }
+
+      // 4. Start liveness task
+      addLog("Starting liveness...");
+      const lRes = await fetch(`${BASE_URL}/liveness/${sData.session_id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start" }),
+      });
+
+      const lData = await lRes.json();
+      console.log("📦 Liveness Start Response:", lData);
+      
+      if (!lData.success) {
+        throw new Error(lData.message || "Failed to start liveness");
+      }
+
+      addLog("✅ Liveness started");
+      setIsStreaming(true);
+
+      // Start BOTH frame processing AND status polling
+      // Frame processing will handle real-time updates
+      // Status polling is a backup check every 100ms
+      taskIntervalRef.current = setInterval(updateTaskStatus, 100);
+      
+    } catch (err: any) {
+      addLog("❌ Error: " + err.message);
+      setError("Error: " + err.message);
+      setDisabled(false);
+      setIsStreaming(false);
+    }
   };
+
+  /* ---------------- CLEANUP ---------------- */
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (taskIntervalRef.current) {
+        clearInterval(taskIntervalRef.current);
+      }
+      window.speechSynthesis.cancel();
+    };
+  }, []);
 
   /* ---------------- UI ---------------- */
   return (
     <div style={styles.body}>
       <div style={styles.container}>
-        <div style={styles.title}>Please face the phone screen</div>
+        <div style={styles.title}>Face Liveness Verification</div>
         <div style={styles.instruction}>Follow the on-screen instructions</div>
 
         <div style={styles.cameraWrapper}>
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            style={styles.video}
-          />
+          <video ref={videoRef} autoPlay playsInline style={styles.video} />
           <div
             style={{
               ...styles.ring,
@@ -219,8 +471,42 @@ const LivenessVerification = () => {
           />
         </div>
 
-        <div style={styles.task}>{taskText}</div>
-        <div style={styles.timer}>{timer}</div>
+        {taskText && (
+          <div style={styles.task}>{taskText}</div>
+        )}
+        
+        {timer && (
+          <div style={styles.timer}>{timer}</div>
+        )}
+
+        {error && <div style={styles.error}>{error}</div>}
+
+        {/* Status Log */}
+        <div style={styles.logContainer}>
+          <div style={styles.logTitle}>📊 Status Log:</div>
+          {statusLog.length === 0 ? (
+            <div style={styles.logItem}>Waiting...</div>
+          ) : (
+            statusLog.map((log, i) => (
+              <div key={i} style={styles.logItem}>{log}</div>
+            ))
+          )}
+        </div>
+
+        {/* Detection Info */}
+        {detectionResult && (
+          <div style={styles.detectionInfo}>
+            <div style={styles.detectionItem}>
+              Face: {detectionResult.face_detected ? "✅" : "❌"}
+            </div>
+            {detectionResult.is_real !== undefined && (
+              <div style={styles.detectionItem}>
+                Real: {detectionResult.is_real ? "✅" : "❌"} 
+                ({Math.round((detectionResult.confidence || 0) * 100)}%)
+              </div>
+            )}
+          </div>
+        )}
 
         <button
           disabled={disabled}
@@ -228,16 +514,16 @@ const LivenessVerification = () => {
           style={{
             ...styles.button,
             background: disabled ? "#9ca3af" : "#2563eb",
+            cursor: disabled ? "not-allowed" : "pointer",
           }}
         >
-          Start Liveness
+          {disabled ? "Processing..." : "Start Liveness"}
         </button>
 
-        {/* -------- TESTING PREVIEW -------- */}
         {previewUrl && (
           <div style={{ marginTop: 16 }}>
-            <p style={{ fontSize: 12, color: "#6b7280" }}>
-              Captured Image (Testing)
+            <p style={{ fontSize: 12, color: "#6b7280", fontWeight: 600 }}>
+              📸 Captured Image
             </p>
             <img
               src={previewUrl}
@@ -246,24 +532,33 @@ const LivenessVerification = () => {
                 width: 120,
                 borderRadius: 8,
                 marginTop: 6,
-                border: "1px solid #e5e7eb",
+                border: "2px solid #e5e7eb",
               }}
             />
-            <br />
-            <a
-              href={previewUrl}
-              download="captured-face.jpg"
-              style={{ fontSize: 12, color: "#2563eb" }}
-            >
-              Download Image
-            </a>
+          </div>
+        )}
+
+        {/* Face Verification Result */}
+        {faceVerificationResult && (
+          <div style={styles.faceResult}>
+            <div style={styles.faceResultTitle}>
+              {faceVerificationResult.type === "existing" ? "👤 Existing User" : "🆕 New User"}
+            </div>
+            <div style={styles.faceResultDetail}>
+              User ID: {faceVerificationResult.userId}
+            </div>
+            {faceVerificationResult.confidence && (
+              <div style={styles.faceResultDetail}>
+                Confidence: {Math.round(faceVerificationResult.confidence * 100)}%
+              </div>
+            )}
           </div>
         )}
 
         <canvas
           ref={canvasRef}
-          width={320}
-          height={240}
+          width={640}
+          height={480}
           style={{ display: "none" }}
         />
       </div>
@@ -271,62 +566,145 @@ const LivenessVerification = () => {
   );
 };
 
-/* ---------------- SAME CSS ---------------- */
 const styles: any = {
   body: {
     margin: 0,
-    fontFamily:
-      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto',
-    background: "#ffffff",
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto',
+    background: "#f9fafb",
     color: "#111827",
     textAlign: "center",
     minHeight: "100vh",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
+    padding: 20,
   },
-  container: { padding: 16 },
-  title: { fontSize: 18, marginBottom: 6 },
-  instruction: { fontSize: 14, color: "#374151", marginBottom: 14 },
+  container: { 
+    padding: 20,
+    maxWidth: 420,
+    background: "#fff",
+    borderRadius: 16,
+    boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
+  },
+  title: { 
+    fontSize: 20, 
+    marginBottom: 6, 
+    fontWeight: 700,
+    color: "#1f2937",
+  },
+  instruction: { 
+    fontSize: 14, 
+    color: "#6b7280", 
+    marginBottom: 20,
+  },
   cameraWrapper: {
     position: "relative",
-    width: 300,
-    height: 300,
+    width: 280,
+    height: 280,
     margin: "0 auto",
     borderRadius: "50%",
     overflow: "hidden",
     background: "#000",
+    boxShadow: "0 8px 16px rgba(0,0,0,0.2)",
   },
   video: {
     width: "100%",
     height: "100%",
     objectFit: "cover",
-    transform: "scaleX(-1)", // 👈 mirror ONLY for UI
+    transform: "scaleX(-1)",
   },
   ring: {
     position: "absolute",
     inset: 8,
     borderRadius: "50%",
     border: "6px solid",
+    transition: "border-color 0.3s",
   },
   task: {
-    marginTop: 16,
-    fontSize: 18,
+    marginTop: 20,
+    fontSize: 20,
     color: "#f59e0b",
-    fontWeight: 600,
-    minHeight: 28,
+    fontWeight: 700,
+    minHeight: 30,
   },
-  timer: { fontSize: 14, color: "#6b7280" },
+  timer: { 
+    fontSize: 16, 
+    color: "#6b7280", 
+    marginTop: 8,
+    fontWeight: 600,
+  },
+  error: {
+    marginTop: 12,
+    fontSize: 13,
+    color: "#dc2626",
+    padding: 10,
+    background: "#fee2e2",
+    borderRadius: 8,
+    fontWeight: 500,
+  },
+  logContainer: {
+    marginTop: 16,
+    padding: 12,
+    background: "#f3f4f6",
+    borderRadius: 8,
+    maxHeight: 140,
+    overflow: "auto",
+    fontSize: 11,
+    textAlign: "left",
+    border: "1px solid #e5e7eb",
+  },
+  logTitle: {
+    fontWeight: 700,
+    marginBottom: 6,
+    color: "#374151",
+  },
+  logItem: {
+    marginBottom: 3,
+    color: "#4b5563",
+    fontFamily: "monospace",
+    lineHeight: 1.4,
+  },
+  detectionInfo: {
+    marginTop: 12,
+    display: "flex",
+    gap: 12,
+    justifyContent: "center",
+    fontSize: 12,
+  },
+  detectionItem: {
+    padding: "4px 8px",
+    background: "#f3f4f6",
+    borderRadius: 6,
+    fontWeight: 600,
+    color: "#374151",
+  },
   button: {
     marginTop: 24,
-    width: "90%",
-    maxWidth: 320,
-    padding: 14,
+    width: "100%",
+    padding: 16,
     border: "none",
     borderRadius: 12,
     color: "#fff",
     fontSize: 16,
-    cursor: "pointer",
+    fontWeight: 700,
+    transition: "all 0.2s",
+  },
+  faceResult: {
+    marginTop: 16,
+    padding: 16,
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    borderRadius: 12,
+    color: "#fff",
+  },
+  faceResultTitle: {
+    fontSize: 18,
+    fontWeight: 700,
+    marginBottom: 8,
+  },
+  faceResultDetail: {
+    fontSize: 14,
+    marginTop: 4,
+    opacity: 0.95,
   },
 };
 
