@@ -293,72 +293,72 @@ const LivenessVerification = () => {
   }, [isStreaming, frameLoop]);
 
   /* ---------------- TASK STATUS POLLING (BACKUP CHECK) ---------------- */
-  const updateTaskStatus = useCallback(async () => {
-    if (verificationCompleteRef.current || !sessionId) return;
+  // const updateTaskStatus = useCallback(async () => {
+  //   if (verificationCompleteRef.current || !sessionId) return;
 
-    try {
-      const response = await fetch(`${BASE_URL}/liveness/${sessionId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "status" }),
-      });
+  //   try {
+  //     const response = await fetch(`${BASE_URL}/liveness/${sessionId}`, {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ action: "status" }),
+  //     });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
+  //     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  //     const data = await response.json();
 
-      // Log the full response to debug
-      console.log("📦 Status API Response:", data);
+  //     // Log the full response to debug
+  //     console.log("📦 Status API Response:", data);
 
-      const status = data.session_status || data;
+  //     const status = data.session_status || data;
 
-      // Update UI if task is active
-      if (status?.active && status?.current_task) {
-        setActive(true);
-        const displayTask = status.current_task.description;
-        const timeLeft = Math.floor(status.current_task.time_remaining || 0);
+  //     // Update UI if task is active
+  //     if (status?.active && status?.current_task) {
+  //       setActive(true);
+  //       const displayTask = status.current_task.description;
+  //       const timeLeft = Math.floor(status.current_task.time_remaining || 0);
         
-        setTaskText(displayTask);
-        setTimer(`Time left: ${timeLeft}s`);
+  //       setTaskText(displayTask);
+  //       setTimer(`Time left: ${timeLeft}s`);
         
-        addLog(`📋 [Status] ${displayTask} (${timeLeft}s)`);
-        speak(getVoiceText(displayTask));
-      }
+  //       addLog(`📋 [Status] ${displayTask} (${timeLeft}s)`);
+  //       speak(getVoiceText(displayTask));
+  //     }
 
-      // Check completion
-      if (status && !status.active && status.result) {
-        addLog("🎉 Verification complete from status!");
-        verificationCompleteRef.current = true;
+  //     // Check completion
+  //     if (status && !status.active && status.result) {
+  //       addLog("🎉 Verification complete from status!");
+  //       verificationCompleteRef.current = true;
 
-        if (taskIntervalRef.current) {
-          clearInterval(taskIntervalRef.current);
-          taskIntervalRef.current = null;
-        }
+  //       if (taskIntervalRef.current) {
+  //         clearInterval(taskIntervalRef.current);
+  //         taskIntervalRef.current = null;
+  //       }
 
-        setActive(false);
-        setDisabled(false);
-        setIsStreaming(false);
-        setTaskText("");
-        setTimer("");
+  //       setActive(false);
+  //       setDisabled(false);
+  //       setIsStreaming(false);
+  //       setTaskText("");
+  //       setTimer("");
 
-        if (status.result.final_result) {
-          speak("Liveness verification successful");
-          addLog("✅ LIVENESS SUCCESS!");
+  //       if (status.result.final_result) {
+  //         speak("Liveness verification successful");
+  //         addLog("✅ LIVENESS SUCCESS!");
           
-          // 🔥 Perform face verification after successful liveness
-          setTimeout(() => {
-            performFaceVerification();
-          }, 1000);
-        } else {
-          speak("Liveness verification failed");
-          addLog("❌ LIVENESS FAILED");
-          alert("❌ Liveness Failed");
-        }
-      }
-    } catch (err: any) {
-      console.error("Task status error:", err);
-      addLog("⚠️ Status check error: " + err.message);
-    }
-  }, [sessionId]);
+  //         // 🔥 Perform face verification after successful liveness
+  //         setTimeout(() => {
+  //           performFaceVerification();
+  //         }, 1000);
+  //       } else {
+  //         speak("Liveness verification failed");
+  //         addLog("❌ LIVENESS FAILED");
+  //         alert("❌ Liveness Failed");
+  //       }
+  //     }
+  //   } catch (err: any) {
+  //     console.error("Task status error:", err);
+  //     addLog("⚠️ Status check error: " + err.message);
+  //   }
+  // }, [sessionId]);
 
   /* ---------------- START LIVENESS ---------------- */
   const startLiveness = async () => {
