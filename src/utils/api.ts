@@ -1,6 +1,6 @@
 export const API_CONFIG = {
-  // BASE_URL: "https://itunitys.com",
-  BASE_URL: "http://15.206.8.45", //
+  BASE_URL: "https://itunitys.com",
+  // BASE_URL: "http://15.206.8.45", //
   API_KEY: "dz_live_2024_secure_api_key_xyz789",
 };
 

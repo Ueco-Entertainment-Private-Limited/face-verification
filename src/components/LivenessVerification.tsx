@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { addFace, searchFace } from "../utils/api";
 
 /* ---------------- CONFIG ---------------- */
-// const BASE_URL = "https://itunitys.com";
-const BASE_URL = "http://15.206.8.45"; // production
+const BASE_URL = "https://itunitys.com";
+// const BASE_URL = "http://15.206.8.45"; // production
 
 const LivenessVerification = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
