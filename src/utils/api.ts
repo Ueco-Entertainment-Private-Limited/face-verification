@@ -1,96 +1,48 @@
-export const API_CONFIG = {
-  BASE_URL: "https://itunitys.com",
-  // BASE_URL: "http://15.206.8.45", //
-  API_KEY: "dz_live_2024_secure_api_key_xyz789",
+
+// API Configuration matching KycScreen endpoints
+const API_CONFIG = {
+  BASE_URL: "https://dozoapis.com/api",
+  HEADERS: {
+    "Content-Type": "application/json",
+  },
 };
 
+// API Functions matching React Native implementation
 export const createSession = async () => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}/session`, {
+  const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/session`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "create" })
+    headers: API_CONFIG.HEADERS,
   });
-
-  console.log("Create Session Response:", response);
-  return response.json();
-};
-
-export const endSession = async (sessionId: string) => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "end", session_id: sessionId })
-  });
-  console.log("End Session Response:", response);
-  return response.json();
+  const data = await response.json();
+  return data.data;
 };
 
 export const processFrame = async (sessionId: string, frame: string) => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}/process_frame`, {
+  const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/frame`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, frame })
+    headers: API_CONFIG.HEADERS,
+    body: JSON.stringify({ sessionId, frame }),
   });
-  console.log("Process Frame Response:", response);
-  return response.json();
+  const data = await response.json();
+  return data.data;
 };
 
 export const startLivenessApi = async (sessionId: string) => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}/liveness/${sessionId}`, {
+  const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/liveness/start`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "start" })
+    headers: API_CONFIG.HEADERS,
+    body: JSON.stringify({ sessionId }),
   });
-  console.log("Start Liveness Response:", response);
   return response.json();
 };
 
-export const getLivenessStatus = async (sessionId: string) => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}/liveness/${sessionId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "status" })
-  });
-  console.log("Liveness Status Response:", response);
-  return response.json();
-};
-
-export const resetLiveness = async (sessionId: string) => {
-  const response = await fetch(`${API_CONFIG.BASE_URL}/liveness/${sessionId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "reset" })
-  });
-  console.log("Reset Liveness Response:", response);
-  return response.json();
-};
-
-export const searchFace = async (imageBlob: Blob) => {
+export const completeFaceVerification = async (sessionId: string, imageBlob: Blob) => {
   const formData = new FormData();
-  formData.append('action', 'search');
-  formData.append('image', imageBlob);
+  formData.append('file', imageBlob, 'face.jpg');
 
-  const response = await fetch(`${API_CONFIG.BASE_URL}/faces`, {
+  const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/complete`, {
     method: "POST",
-    headers: { "X-API-Key": API_CONFIG.API_KEY },
-    body: formData
+    body: formData,
   });
-  console.log("Search Face Response:", response);
-  return response.json();
-};
-
-export const addFace = async (userName: string, imageBlob: Blob, metadata: any) => {
-  const formData = new FormData();
-  formData.append('action', 'add');
-  formData.append('name', userName);
-  formData.append('metadata', JSON.stringify(metadata));
-  formData.append('image', imageBlob);
-
-  const response = await fetch(`${API_CONFIG.BASE_URL}/faces`, {
-    method: "POST",
-    headers: { "X-API-Key": API_CONFIG.API_KEY },
-    body: formData
-  });
-  console.log("Add Face Response:", response);
   return response.json();
 };
