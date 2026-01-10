@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState,useEffect } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { processFrame, completeFaceVerification, createSession, startLivenessApi } from "../utils/api";
 
 const LivenessVerification = () => {
@@ -20,6 +20,15 @@ const LivenessVerification = () => {
   const [statusLog, setStatusLog] = useState<string[]>([]);
   const [faceDetected, setFaceDetected] = useState(false);
   const [verificationSuccess, setVerificationSuccess] = useState(false);
+
+  const params = new URLSearchParams(window.location.search);
+  const userId = params.get("userId");
+
+  if (!userId) {
+    alert("UserId missing. Open this page from app.");
+    throw new Error("UserId missing");
+  }
+
 
   const addLog = (msg: string) => {
     console.log(msg);
@@ -125,7 +134,7 @@ const LivenessVerification = () => {
       verificationCompleteRef.current = true;
       setActive(false);
       setIsStreaming(false);
-      
+
       if (res.task_session.result.final_result) {
         addLog("✅ Liveness verification successful!");
         speak('Liveness verification successful');
@@ -217,15 +226,16 @@ const LivenessVerification = () => {
       const base64Data = capturedImageRef.current.split(',')[1];
       const byteCharacters = atob(base64Data);
       const byteArrays = [];
-      
+
       for (let i = 0; i < byteCharacters.length; i++) {
         byteArrays.push(byteCharacters.charCodeAt(i));
       }
-      
+
       const byteArray = new Uint8Array(byteArrays);
       const imageBlob = new Blob([byteArray], { type: 'image/jpeg' });
 
-      const result = await completeFaceVerification(imageBlob);
+    const result = await completeFaceVerification(imageBlob, Number(userId));
+
 
       if (result.success) {
         addLog("✅ Face verified successfully!");
@@ -259,7 +269,7 @@ const LivenessVerification = () => {
     try {
       // 1. Create session
       addLog("🔄 Creating session...");
-      const sessionData = await createSession();
+      const sessionData = await createSession(Number(userId));
 
       if (!sessionData.session_id) {
         throw new Error("Failed to create session");
@@ -289,7 +299,7 @@ const LivenessVerification = () => {
       // 4. Start liveness task
       addLog("🚀 Starting liveness verification...");
       const livenessResult = await startLivenessApi(sessionData.session_id);
-      
+
       if (livenessResult.success !== false) {
         addLog("✅ Liveness started - follow instructions");
         setTaskText("Position your face in the circle");
@@ -297,7 +307,7 @@ const LivenessVerification = () => {
       } else {
         throw new Error(livenessResult.message || "Failed to start liveness");
       }
-      
+
     } catch (err: any) {
       addLog("❌ Error: " + err.message);
       setError("Error: " + err.message);
@@ -313,7 +323,7 @@ const LivenessVerification = () => {
         cancelAnimationFrame(animationFrameRef.current);
       }
       window.speechSynthesis.cancel();
-      
+
       // Stop camera stream
       if (videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
@@ -337,12 +347,12 @@ const LivenessVerification = () => {
             style={{
               ...styles.ring,
               borderColor: faceDetected ? "#4CAF50" : active ? "#ec4899" : "#e5e7eb",
-              boxShadow: faceDetected 
-                ? "inset 0 0 30px rgba(76, 175, 80, 0.3), 0 0 20px rgba(76, 175, 80, 0.4)" 
+              boxShadow: faceDetected
+                ? "inset 0 0 30px rgba(76, 175, 80, 0.3), 0 0 20px rgba(76, 175, 80, 0.4)"
                 : "inset 0 0 20px rgba(0,0,0,0.2)",
             }}
           />
-          
+
           {/* Face detection indicator */}
           {isStreaming && (
             <div style={styles.faceIndicator}>
@@ -415,7 +425,7 @@ const styles: any = {
     padding: "20px",
     paddingTop: "40px",
   },
-  container: { 
+  container: {
     width: "100%",
     maxWidth: 480,
     background: "#fff",
@@ -428,13 +438,13 @@ const styles: any = {
     background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
     color: "#fff",
   },
-  title: { 
-    fontSize: 24, 
-    marginBottom: 8, 
+  title: {
+    fontSize: 24,
+    marginBottom: 8,
     fontWeight: 700,
   },
-  instruction: { 
-    fontSize: 15, 
+  instruction: {
+    fontSize: 15,
     opacity: 0.95,
   },
   cameraWrapper: {

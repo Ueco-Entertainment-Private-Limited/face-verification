@@ -8,14 +8,16 @@ const API_CONFIG = {
 };
 
 // API Functions matching React Native implementation
-export const createSession = async () => {
+export const createSession = async (userId: number) => {
   const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/session`, {
     method: "POST",
     headers: API_CONFIG.HEADERS,
+    body: JSON.stringify({ userId }),
   });
   const data = await response.json();
   return data.data;
 };
+
 
 export const processFrame = async (sessionId: string, frame: string) => {
   const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/frame`, {
@@ -36,9 +38,10 @@ export const startLivenessApi = async (sessionId: string) => {
   return response.json();
 };
 
-export const completeFaceVerification = async (imageBlob: Blob) => {
+export const completeFaceVerification = async (imageBlob: Blob, userId: number) => {
   const formData = new FormData();
-  formData.append('file', imageBlob, 'face.jpg');
+  formData.append("file", imageBlob);
+  formData.append("userId", userId.toString());
 
   const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/complete`, {
     method: "POST",
