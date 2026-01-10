@@ -36,7 +36,7 @@ export const startLivenessApi = async (sessionId: string) => {
   return response.json();
 };
 
-export const completeFaceVerification = async (sessionId: string, imageBlob: Blob) => {
+export const completeFaceVerification = async (imageBlob: Blob) => {
   const formData = new FormData();
   formData.append('file', imageBlob, 'face.jpg');
 

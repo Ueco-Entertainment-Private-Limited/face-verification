@@ -225,7 +225,7 @@ const LivenessVerification = () => {
       const byteArray = new Uint8Array(byteArrays);
       const imageBlob = new Blob([byteArray], { type: 'image/jpeg' });
 
-      const result = await completeFaceVerification(sessionId!, imageBlob);
+      const result = await completeFaceVerification(imageBlob);
 
       if (result.success) {
         addLog("✅ Face verified successfully!");
