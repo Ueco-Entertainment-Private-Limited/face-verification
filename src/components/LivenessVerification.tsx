@@ -158,8 +158,8 @@ const LivenessVerification = () => {
     const now = Date.now();
     const timeSinceLastFrame = now - lastFrameTimeRef.current;
 
-    // Throttle to ~20 FPS (50ms between frames)
-    if (timeSinceLastFrame < 50) return;
+    // Throttle to ~40 FPS (25ms between frames)
+    if (timeSinceLastFrame < 25) return;
 
     try {
       processingFrameRef.current = true;
