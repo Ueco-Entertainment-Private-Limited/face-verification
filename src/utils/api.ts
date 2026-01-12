@@ -2,6 +2,7 @@
 // API Configuration matching KycScreen endpoints
 const API_CONFIG = {
   BASE_URL: "https://dozoapis.com/api",
+  // BASE_URL: "http://localhost:4000/api",
   HEADERS: {
     "Content-Type": "application/json",
   },

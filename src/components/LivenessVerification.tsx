@@ -234,8 +234,7 @@ const LivenessVerification = () => {
       const byteArray = new Uint8Array(byteArrays);
       const imageBlob = new Blob([byteArray], { type: 'image/jpeg' });
 
-    const result = await completeFaceVerification(imageBlob, Number(userId));
-
+      const result = await completeFaceVerification(imageBlob, Number(userId));
 
       if (result.success) {
         addLog("✅ Face verified successfully!");
@@ -243,16 +242,41 @@ const LivenessVerification = () => {
         setVerificationSuccess(true);
         setTaskText("Verification Complete! ✅");
       } else {
-        addLog("❌ Face verification failed");
-        setError("Face verification failed");
+        // 🔥 yahan actual backend ka message use karo
+        addLog(`❌ ${result.message}`);
+        setError(result.message);
+
+        // Special case: already verified
+        if (result.message === "Face already verified") {
+          speak("Your face is already verified");
+          setTaskText("Face already verified ✅");
+        } else if (result.message === "Face already registered with another account") {
+          speak("Face already registered with another account");
+          setTaskText("Face already registered with another account ❌");
+        }else {
+          speak("Face verification failed");
+          setTaskText("Verification Failed ❌");
+        }
       }
+
     } catch (error: any) {
-      addLog("❌ Error: " + error.message);
-      setError("Face verification failed");
+      // Agar axios error ho aur backend ne message bheja ho
+      const backendMessage =
+        error?.response?.data?.message || error.message || "Face verification failed";
+
+      addLog(`❌ ${backendMessage}`);
+      setError(backendMessage);
+
+      if (backendMessage === "Face already verified") {
+        speak("Your face is already verified");
+        setTaskText("Face already verified ✅");
+      }
+
     } finally {
       setDisabled(false);
     }
   };
+
 
   /* ---------------- START LIVENESS ---------------- */
   const startLiveness = async () => {
