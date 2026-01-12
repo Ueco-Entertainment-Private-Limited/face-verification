@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, useEffect } from "react";
-import { processFrame, completeFaceVerification, createSession, startLivenessApi } from "../utils/api";
+import { processFrame, completeFaceVerification, createSession, startLivenessApi, endSession } from "../utils/api";
 
 const LivenessVerification = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -10,6 +10,7 @@ const LivenessVerification = () => {
   const verificationCompleteRef = useRef(false);
   const capturedImageRef = useRef<string | null>(null);
   const lastTaskRef = useRef<string | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [taskText, setTaskText] = useState("");
@@ -20,6 +21,7 @@ const LivenessVerification = () => {
   const [statusLog, setStatusLog] = useState<string[]>([]);
   const [faceDetected, setFaceDetected] = useState(false);
   const [verificationSuccess, setVerificationSuccess] = useState(false);
+  const [remainingTime, setRemainingTime] = useState<number>(30);
 
   const params = new URLSearchParams(window.location.search);
   const userId = params.get("userId");
@@ -107,6 +109,28 @@ const LivenessVerification = () => {
     }
   }, []);
 
+  /* ---------------- TIMEOUT HANDLER ---------------- */
+  const handleTimeout = async () => {
+    addLog("⏰ 30 seconds timeout - ending session");
+    speak("Time limit exceeded");
+    setError("Liveness verification timeout. Please try again.");
+    setIsStreaming(false);
+    setActive(false);
+    verificationCompleteRef.current = true;
+    setDisabled(false);
+    setRemainingTime(30);
+    
+    // End session on backend
+    if (sessionId) {
+      try {
+        await endSession(sessionId);
+        addLog("✅ Session ended");
+      } catch (err) {
+        console.error("Error ending session:", err);
+      }
+    }
+  };
+
   /* ---------------- HANDLE FRAME RESPONSE (matching React Native logic) ---------------- */
   const handleFrameResponse = (res: any) => {
     if (res.face_detected === false) {
@@ -134,6 +158,13 @@ const LivenessVerification = () => {
       verificationCompleteRef.current = true;
       setActive(false);
       setIsStreaming(false);
+      
+      // Clear timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      setRemainingTime(30);
 
       if (res.task_session.result.final_result) {
         addLog("✅ Liveness verification successful!");
@@ -145,6 +176,11 @@ const LivenessVerification = () => {
         setError('Liveness failed. Please try again');
         setDisabled(false);
         setTaskText('');
+        
+        // End session on backend
+        if (sessionId) {
+          endSession(sessionId).catch(err => console.error("Error ending session:", err));
+        }
       }
     }
   };
@@ -212,6 +248,24 @@ const LivenessVerification = () => {
     };
   }, [isStreaming, frameLoop]);
 
+  /* ---------------- COUNTDOWN TIMER ---------------- */
+  useEffect(() => {
+    if (isStreaming && !verificationCompleteRef.current) {
+      setRemainingTime(30);
+      const interval = setInterval(() => {
+        setRemainingTime(prev => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(interval);
+    }
+  }, [isStreaming]);
+
   /* ---------------- COMPLETE VERIFICATION ---------------- */
   const completeVerification = async () => {
     try {
@@ -241,6 +295,16 @@ const LivenessVerification = () => {
         speak("Face verified successfully");
         setVerificationSuccess(true);
         setTaskText("Verification Complete! ✅");
+        
+        // End session on backend after successful verification
+        if (sessionId) {
+          try {
+            await endSession(sessionId);
+            addLog("✅ Session ended successfully");
+          } catch (err) {
+            console.error("Error ending session:", err);
+          }
+        }
       } else {
         // 🔥 yahan actual backend ka message use karo
         addLog(`❌ ${result.message}`);
@@ -328,6 +392,12 @@ const LivenessVerification = () => {
         addLog("✅ Liveness started - follow instructions");
         setTaskText("Position your face in the circle");
         setIsStreaming(true);
+        
+        // Start 30-second timeout
+        timeoutRef.current = setTimeout(() => {
+          handleTimeout();
+        }, 30000);
+        addLog("⏱️  30 seconds countdown started");
       } else {
         throw new Error(livenessResult.message || "Failed to start liveness");
       }
@@ -345,6 +415,9 @@ const LivenessVerification = () => {
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
       }
       window.speechSynthesis.cancel();
 
@@ -385,6 +458,18 @@ const LivenessVerification = () => {
                 backgroundColor: faceDetected ? '#4CAF50' : '#FF5252',
               }}>
                 {faceDetected ? '✓ Face Detected' : '✗ No Face'}
+              </div>
+            </div>
+          )}
+
+          {/* Countdown Timer */}
+          {isStreaming && (
+            <div style={styles.timerContainer}>
+              <div style={{
+                ...styles.timerBadge,
+                backgroundColor: remainingTime <= 10 ? '#FF5252' : '#2563eb',
+              }}>
+                ⏱️ {remainingTime}s
               </div>
             </div>
           )}
@@ -509,6 +594,23 @@ const styles: any = {
     fontSize: 12,
     fontWeight: 600,
     boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+  },
+  timerContainer: {
+    position: "absolute",
+    bottom: 16,
+    left: 0,
+    right: 0,
+    display: "flex",
+    justifyContent: "center",
+  },
+  timerBadge: {
+    padding: "10px 20px",
+    borderRadius: 25,
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: 700,
+    boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+    transition: "all 0.3s ease",
   },
   taskSection: {
     marginTop: 24,

@@ -50,3 +50,12 @@ export const completeFaceVerification = async (imageBlob: Blob, userId: number) 
   });
   return response.json();
 };
+
+export const endSession = async (sessionId: string) => {
+  const response = await fetch(`${API_CONFIG.BASE_URL}/auth/face/session/end`, {
+    method: "POST",
+    headers: API_CONFIG.HEADERS,
+    body: JSON.stringify({ sessionId }),
+  });
+  return response.json();
+};
