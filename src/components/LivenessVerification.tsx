@@ -97,7 +97,7 @@ const LivenessVerification = () => {
             resolve();
           };
           videoRef.current!.onerror = reject;
-          setTimeout(() => reject(new Error("Camera timeout")), 10000);
+          // setTimeout(() => reject(new Error("Camera timeout")), 10000);
         });
       }
       return true;
