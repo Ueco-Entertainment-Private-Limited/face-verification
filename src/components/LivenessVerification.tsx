@@ -18,10 +18,10 @@ const LivenessVerification = () => {
   const [disabled, setDisabled] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusLog, setStatusLog] = useState<string[]>([]);
   const [faceDetected, setFaceDetected] = useState(false);
   const [verificationSuccess, setVerificationSuccess] = useState(false);
   const [remainingTime, setRemainingTime] = useState<number>(30);
+  const [cameraReady, setCameraReady] = useState(false);
 
   const params = new URLSearchParams(window.location.search);
   const userId = params.get("userId");
@@ -31,10 +31,8 @@ const LivenessVerification = () => {
     throw new Error("UserId missing");
   }
 
-
   const addLog = (msg: string) => {
     console.log(msg);
-    setStatusLog(prev => [...prev.slice(-8), `${new Date().toLocaleTimeString()}: ${msg}`]);
   };
 
   /* ---------------- VOICE ---------------- */
@@ -95,6 +93,7 @@ const LivenessVerification = () => {
               canvasRef.current.height = videoRef.current.videoHeight;
             }
             addLog("✅ Camera ready");
+            setCameraReady(true);
             resolve();
           };
           videoRef.current!.onerror = reject;
@@ -105,6 +104,7 @@ const LivenessVerification = () => {
     } catch (err: any) {
       addLog("❌ Camera error: " + err.message);
       setError("Camera access denied: " + err.message);
+      setCameraReady(false);
       return false;
     }
   }, []);
@@ -119,8 +119,7 @@ const LivenessVerification = () => {
     verificationCompleteRef.current = true;
     setDisabled(false);
     setRemainingTime(30);
-    
-    // End session on backend
+
     if (sessionId) {
       try {
         await endSession(sessionId);
@@ -131,7 +130,7 @@ const LivenessVerification = () => {
     }
   };
 
-  /* ---------------- HANDLE FRAME RESPONSE (matching React Native logic) ---------------- */
+  /* ---------------- HANDLE FRAME RESPONSE ---------------- */
   const handleFrameResponse = (res: any) => {
     if (res.face_detected === false) {
       setFaceDetected(false);
@@ -140,7 +139,6 @@ const LivenessVerification = () => {
 
     setFaceDetected(true);
 
-    // Check for active task
     if (res.task_session?.active && res.task_session?.current_task) {
       const desc = res.task_session.current_task.description;
 
@@ -153,13 +151,11 @@ const LivenessVerification = () => {
       setActive(true);
     }
 
-    // Check for completion
     if (res.task_session && !res.task_session.active && res.task_session.result) {
       verificationCompleteRef.current = true;
       setActive(false);
       setIsStreaming(false);
-      
-      // Clear timeout
+
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
@@ -176,8 +172,7 @@ const LivenessVerification = () => {
         setError('Liveness failed. Please try again');
         setDisabled(false);
         setTaskText('');
-        
-        // End session on backend
+
         if (sessionId) {
           endSession(sessionId).catch(err => console.error("Error ending session:", err));
         }
@@ -194,7 +189,6 @@ const LivenessVerification = () => {
     const now = Date.now();
     const timeSinceLastFrame = now - lastFrameTimeRef.current;
 
-    // Throttle to ~40 FPS (25ms between frames)
     if (timeSinceLastFrame < 0) return;
 
     try {
@@ -276,7 +270,6 @@ const LivenessVerification = () => {
 
       addLog("📤 Completing verification...");
 
-      // Convert base64 to Blob
       const base64Data = capturedImageRef.current.split(',')[1];
       const byteCharacters = atob(base64Data);
       const byteArrays = [];
@@ -295,8 +288,7 @@ const LivenessVerification = () => {
         speak("Face verified successfully");
         setVerificationSuccess(true);
         setTaskText("Verification Complete! ✅");
-        
-        // End session on backend after successful verification
+
         if (sessionId) {
           try {
             await endSession(sessionId);
@@ -306,25 +298,22 @@ const LivenessVerification = () => {
           }
         }
       } else {
-        // 🔥 yahan actual backend ka message use karo
         addLog(`❌ ${result.message}`);
         setError(result.message);
 
-        // Special case: already verified
         if (result.message === "Face already verified") {
           speak("Your face is already verified");
           setTaskText("Face already verified ✅");
         } else if (result.message === "Face already registered with another account") {
           speak("Face already registered with another account");
           setTaskText("Face already registered with another account ❌");
-        }else {
+        } else {
           speak("Face verification failed");
           setTaskText("Verification Failed ❌");
         }
       }
 
     } catch (error: any) {
-      // Agar axios error ho aur backend ne message bheja ho
       const backendMessage =
         error?.response?.data?.message || error.message || "Face verification failed";
 
@@ -341,21 +330,23 @@ const LivenessVerification = () => {
     }
   };
 
-
   /* ---------------- START LIVENESS ---------------- */
   const startLiveness = async () => {
+    if (!cameraReady) {
+      setError("Please wait for camera to be ready");
+      return;
+    }
+
     setDisabled(true);
     setError(null);
     verificationCompleteRef.current = false;
     setVerificationSuccess(false);
-    setStatusLog([]);
     setTaskText("");
     setActive(false);
     setFaceDetected(false);
     lastTaskRef.current = null;
 
     try {
-      // 1. Create session
       addLog("🔄 Creating session...");
       const sessionData = await createSession(Number(userId));
 
@@ -366,16 +357,8 @@ const LivenessVerification = () => {
       addLog(`✅ Session created: ${sessionData.session_id}`);
       setSessionId(sessionData.session_id);
 
-      // 2. Get camera access
-      if (!(await getUserMedia())) {
-        setDisabled(false);
-        return;
-      }
+      await new Promise(resolve => setTimeout(resolve, 800));
 
-      // Wait for camera to stabilize
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // 3. Capture initial image (like React Native takePhoto)
       if (videoRef.current && canvasRef.current) {
         const ctx = canvasRef.current.getContext("2d")!;
         ctx.drawImage(videoRef.current, 0, 0);
@@ -384,7 +367,6 @@ const LivenessVerification = () => {
         addLog("📸 Initial photo captured");
       }
 
-      // 4. Start liveness task
       addLog("🚀 Starting liveness verification...");
       const livenessResult = await startLivenessApi(sessionData.session_id);
 
@@ -392,8 +374,7 @@ const LivenessVerification = () => {
         addLog("✅ Liveness started - follow instructions");
         setTaskText("Position your face in the circle");
         setIsStreaming(true);
-        
-        // Start 30-second timeout
+
         timeoutRef.current = setTimeout(() => {
           handleTimeout();
         }, 30000);
@@ -412,6 +393,8 @@ const LivenessVerification = () => {
 
   /* ---------------- CLEANUP ---------------- */
   useEffect(() => {
+    getUserMedia();
+
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -421,22 +404,50 @@ const LivenessVerification = () => {
       }
       window.speechSynthesis.cancel();
 
-      // Stop camera stream
       if (videoRef.current?.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [getUserMedia]);
 
   /* ---------------- UI ---------------- */
   return (
     <div style={styles.body}>
       <div style={styles.container}>
         <div style={styles.header}>
-          <div style={styles.title}>🎭 Face Liveness Verification</div>
-          <div style={styles.instruction}>Follow the on-screen instructions</div>
+          <div style={styles.headerText}>Please face the phone screen and move your face into the frame</div>
         </div>
+
+        {/* <div style={styles.cameraWrapper}>
+          <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+          <div
+            style={{
+              ...styles.ring,
+              borderColor: faceDetected ? "#4CAF50" : active ? "#ec4899" : "#e5e7eb",
+            }}
+          />
+
+          <div style={styles.faceIndicator}>
+            <div style={{
+              width: 12,
+              height: 12,
+              borderRadius: '50%',
+              backgroundColor: faceDetected ? '#4CAF50' : '#FF5252',
+            }} />
+          </div>
+
+          {isStreaming && (
+            <div style={styles.timerContainer}>
+              <div style={{
+                ...styles.timerBadge,
+                backgroundColor: remainingTime <= 10 ? '#FF5252' : '#2563eb',
+              }}>
+                ⏱️ {remainingTime}s
+              </div>
+            </div>
+          )}
+        </div> */}
 
         <div style={styles.cameraWrapper}>
           <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
@@ -474,11 +485,13 @@ const LivenessVerification = () => {
             </div>
           )}
         </div>
-
         {taskText && (
           <div style={styles.taskSection}>
-            <div style={styles.taskBadge}>INSTRUCTION</div>
             <div style={styles.task}>{taskText}</div>
+            <div style={styles.subText}>Please look straight at the camera and keep still</div>
+            <div style={styles.iconContainer}>
+              <div style={styles.faceIcon}>👤</div>
+            </div>
           </div>
         )}
 
@@ -486,28 +499,16 @@ const LivenessVerification = () => {
 
         <div style={styles.bottomSection}>
           <button
-            disabled={disabled}
+            disabled={disabled || !cameraReady}
             onClick={startLiveness}
             style={{
               ...styles.button,
-              background: disabled ? "#9ca3af" : verificationSuccess ? "#4CAF50" : "#2563eb",
-              cursor: disabled ? "not-allowed" : "pointer",
+              background: disabled || !cameraReady ? "#9ca3af" : verificationSuccess ? "#4CAF50" : "#2563eb",
+              cursor: disabled || !cameraReady ? "not-allowed" : "pointer",
             }}
           >
-            {verificationSuccess ? "✅ Verified Successfully" : disabled ? "⏳ Processing..." : "🚀 Start Verification"}
+            {verificationSuccess ? "✅ Verified Successfully" : disabled ? "⏳ Processing..." : !cameraReady ? "📷 Initializing Camera..." : "🚀 Start Liveness"}
           </button>
-
-          {/* Status Log */}
-          <div style={styles.logContainer}>
-            <div style={styles.logTitle}>📊 Status Log:</div>
-            {statusLog.length === 0 ? (
-              <div style={styles.logItem}>Ready to start verification...</div>
-            ) : (
-              statusLog.map((log, i) => (
-                <div key={i} style={styles.logItem}>{log}</div>
-              ))
-            )}
-          </div>
         </div>
 
         <canvas
@@ -525,46 +526,39 @@ const styles: any = {
   body: {
     margin: 0,
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto',
-    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    background: "#ffffff",
     color: "#111827",
     minHeight: "100vh",
     display: "flex",
     justifyContent: "center",
     alignItems: "flex-start",
     padding: "20px",
-    paddingTop: "40px",
+    paddingTop: "20px",
   },
   container: {
     width: "100%",
     maxWidth: 480,
     background: "#fff",
-    borderRadius: 24,
-    boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-    overflow: "hidden",
   },
   header: {
-    padding: "24px 20px",
-    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-    color: "#fff",
+    padding: "20px",
+    textAlign: "center",
   },
-  title: {
-    fontSize: 24,
-    marginBottom: 8,
-    fontWeight: 700,
-  },
-  instruction: {
-    fontSize: 15,
-    opacity: 0.95,
+  headerText: {
+    fontSize: 18,
+    fontWeight: 600,
+    color: "#111827",
+    lineHeight: 1.4,
   },
   cameraWrapper: {
     position: "relative",
-    width: 360,
-    height: 360,
-    margin: "30px auto",
+    width: "90%",
+    maxWidth: 420,
+    height: 420,
+    margin: "20px auto",
     borderRadius: "50%",
     overflow: "hidden",
     background: "#000",
-    boxShadow: "0 12px 24px rgba(0,0,0,0.3)",
   },
   video: {
     width: "100%",
@@ -574,35 +568,38 @@ const styles: any = {
   },
   ring: {
     position: "absolute",
-    inset: 8,
+    inset: 0,
     borderRadius: "50%",
-    border: "8px solid",
+    border: "10px solid",
     transition: "all 0.3s ease",
   },
-  faceIndicator: {
-    position: "absolute",
-    top: 16,
-    left: 0,
-    right: 0,
-    display: "flex",
-    justifyContent: "center",
-  },
-  faceIndicatorBadge: {
-    padding: "8px 16px",
-    borderRadius: 20,
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: 600,
-    boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-  },
+faceIndicator: {
+  position: "absolute",
+  top: "8%",          // circle ke top ke paas lane ke liye (adjust kar sakta hai)
+  left: "50%",
+  transform: "translateX(-50%)",
+  zIndex: 10,
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
+},
   timerContainer: {
     position: "absolute",
-    bottom: 16,
+    bottom: 20,
     left: 0,
     right: 0,
     display: "flex",
     justifyContent: "center",
   },
+faceIndicatorBadge: {
+  padding: "6px 12px",
+  // justifyContent: "center",
+  alignItems: "center",
+  fontSize: 14,
+  borderRadius: 20,
+  color: "#fff",
+}
+,
   timerBadge: {
     padding: "10px 20px",
     borderRadius: 25,
@@ -613,38 +610,44 @@ const styles: any = {
     transition: "all 0.3s ease",
   },
   taskSection: {
-    marginTop: 24,
+    marginTop: 30,
     padding: "0 20px",
     textAlign: "center",
   },
-  taskBadge: {
-    display: "inline-block",
-    backgroundColor: "rgba(74, 144, 226, 0.2)",
-    color: "#2563eb",
-    padding: "4px 12px",
-    borderRadius: 12,
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: 1,
-    marginBottom: 12,
-  },
   task: {
-    fontSize: 20,
-    color: "#f59e0b",
+    fontSize: 22,
+    color: "#ef4444",
     fontWeight: 700,
-    minHeight: 30,
+    marginBottom: 16,
+  },
+  subText: {
+    fontSize: 16,
+    color: "#f59e0b",
+    fontWeight: 600,
+    marginBottom: 24,
+  },
+  iconContainer: {
+    display: "flex",
+    justifyContent: "center",
+    marginTop: 20,
+  },
+  faceIcon: {
+    fontSize: 80,
+    opacity: 0.3,
   },
   error: {
-    margin: "12px 20px",
-    fontSize: 13,
+    margin: "16px 20px",
+    fontSize: 14,
     color: "#dc2626",
     padding: 12,
     background: "#fee2e2",
     borderRadius: 8,
     fontWeight: 500,
+    textAlign: "center",
   },
   bottomSection: {
     padding: "0 20px 20px",
+    marginTop: 30,
   },
   button: {
     width: "100%",
@@ -655,30 +658,6 @@ const styles: any = {
     fontSize: 17,
     fontWeight: 700,
     transition: "all 0.2s",
-    marginBottom: 16,
-    marginTop: 16,
-  },
-  logContainer: {
-    padding: 14,
-    background: "#f9fafb",
-    borderRadius: 10,
-    maxHeight: 180,
-    overflow: "auto",
-    fontSize: 10,
-    textAlign: "left",
-    border: "1px solid #e5e7eb",
-  },
-  logTitle: {
-    fontWeight: 700,
-    marginBottom: 8,
-    color: "#374151",
-    fontSize: 11,
-  },
-  logItem: {
-    marginBottom: 4,
-    color: "#4b5563",
-    fontFamily: "monospace",
-    lineHeight: 1.5,
   },
 };
 
