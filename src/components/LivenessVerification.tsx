@@ -1,5 +1,13 @@
-import { useCallback, useRef, useState, useEffect } from "react";
-import { processFrame, completeFaceVerification, createSession, startLivenessApi, endSession } from "../utils/api";
+import { useRef, useState, useCallback, useEffect } from 'react';
+import { createSession, startLivenessApi, processFrame, endSession, completeFaceVerification } from '../utils/api'; // Your API functions
+
+declare global {
+  interface Window {
+    ReactNativeWebView?: {
+      postMessage: (message: string) => void;
+    };
+  }
+}
 
 const LivenessVerification = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -33,6 +41,21 @@ const LivenessVerification = () => {
 
   const addLog = (msg: string) => {
     console.log(msg);
+  };
+
+  /* ---------------- HELPER: Send Message to React Native ---------------- */
+  const sendToReactNative = (type: string, data: any) => {
+    if (window.ReactNativeWebView) {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type,
+          ...data
+        }));
+        addLog(`📤 Sent to RN: ${type}`);
+      } catch (err) {
+        console.error('Failed to send message to RN:', err);
+      }
+    }
   };
 
   /* ---------------- VOICE ---------------- */
@@ -97,7 +120,6 @@ const LivenessVerification = () => {
             resolve();
           };
           videoRef.current!.onerror = reject;
-          // setTimeout(() => reject(new Error("Camera timeout")), 10000);
         });
       }
       return true;
@@ -128,6 +150,12 @@ const LivenessVerification = () => {
         console.error("Error ending session:", err);
       }
     }
+
+    // ✅ React Native ko timeout notification
+    sendToReactNative('verification-timeout', {
+      success: false,
+      message: 'Liveness verification timeout. Please try again.'
+    });
   };
 
   /* ---------------- HANDLE FRAME RESPONSE ---------------- */
@@ -174,8 +202,14 @@ const LivenessVerification = () => {
         setTaskText('');
 
         if (sessionId) {
-          endSession(sessionId).catch(err => console.error("Error ending session:", err));
+          endSession(sessionId).catch((err: any) => console.error("Error ending session:", err));
         }
+
+        // ✅ React Native ko liveness failed notification
+        sendToReactNative('verification-failed', {
+          success: false,
+          message: 'Liveness verification failed. Please try again.'
+        });
       }
     }
   };
@@ -242,17 +276,23 @@ const LivenessVerification = () => {
     };
   }, [isStreaming, frameLoop]);
 
-  /* ---------------- COUNTDOWN TIMER ---------------- */
+  /* ---------------- COUNTDOWN TIMER WITH AUTO-TIMEOUT ---------------- */
   useEffect(() => {
     if (isStreaming && !verificationCompleteRef.current) {
       setRemainingTime(30);
       const interval = setInterval(() => {
         setRemainingTime(prev => {
-          if (prev <= 1) {
+          const newTime = prev - 1;
+          
+          if (newTime <= 0) {
             clearInterval(interval);
+            if (!verificationCompleteRef.current) {
+              handleTimeout();
+            }
             return 0;
           }
-          return prev - 1;
+          
+          return newTime;
         });
       }, 1000);
 
@@ -265,6 +305,10 @@ const LivenessVerification = () => {
     try {
       if (!capturedImageRef.current) {
         addLog("❌ No captured image");
+        sendToReactNative('verification-error', {
+          success: false,
+          message: 'No captured image found'
+        });
         return;
       }
 
@@ -289,6 +333,12 @@ const LivenessVerification = () => {
         setVerificationSuccess(true);
         setTaskText("Verification Complete! ✅");
 
+        // ✅ React Native ko success notification
+        sendToReactNative('verification-complete', {
+          success: true,
+          message: 'Face verified successfully'
+        });
+
         if (sessionId) {
           try {
             await endSession(sessionId);
@@ -301,16 +351,33 @@ const LivenessVerification = () => {
         addLog(`❌ ${result.message}`);
         setError(result.message);
 
+        let spokenMessage = result.message;
+
         if (result.message === "Face already verified") {
-          speak("Your face is already verified");
+          spokenMessage = "Your face is already verified";
           setTaskText("Face already verified ✅");
+          // This is actually a success case
+          sendToReactNative('verification-complete', {
+            success: true,
+            message: 'Face already verified'
+          });
         } else if (result.message === "Face already registered with another account") {
-          speak("Face already registered with another account");
+          spokenMessage = "Face already registered with another account";
           setTaskText("Face already registered with another account ❌");
+          sendToReactNative('verification-failed', {
+            success: false,
+            message: 'Face already registered with another account'
+          });
         } else {
-          speak("Face verification failed");
+          spokenMessage = "Face verification failed";
           setTaskText("Verification Failed ❌");
+          sendToReactNative('verification-failed', {
+            success: false,
+            message: result.message
+          });
         }
+
+        speak(spokenMessage);
       }
 
     } catch (error: any) {
@@ -323,6 +390,16 @@ const LivenessVerification = () => {
       if (backendMessage === "Face already verified") {
         speak("Your face is already verified");
         setTaskText("Face already verified ✅");
+        sendToReactNative('verification-complete', {
+          success: true,
+          message: 'Face already verified'
+        });
+      } else {
+        speak("Face verification failed");
+        sendToReactNative('verification-error', {
+          success: false,
+          message: backendMessage
+        });
       }
 
     } finally {
@@ -379,6 +456,12 @@ const LivenessVerification = () => {
           handleTimeout();
         }, 30000);
         addLog("⏱️  30 seconds countdown started");
+
+        // ✅ Notify React Native that liveness started
+        sendToReactNative('liveness-started', {
+          sessionId: sessionData.session_id,
+          message: 'Liveness verification started'
+        });
       } else {
         throw new Error(livenessResult.message || "Failed to start liveness");
       }
@@ -388,6 +471,12 @@ const LivenessVerification = () => {
       setError("Error: " + err.message);
       setDisabled(false);
       setIsStreaming(false);
+
+      // ✅ Notify React Native about error
+      sendToReactNative('verification-error', {
+        success: false,
+        message: err.message || 'Failed to start verification'
+      });
     }
   };
 
@@ -418,36 +507,6 @@ const LivenessVerification = () => {
         <div style={styles.header}>
           <div style={styles.headerText}>Please face the phone screen and move your face into the frame</div>
         </div>
-
-        {/* <div style={styles.cameraWrapper}>
-          <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
-          <div
-            style={{
-              ...styles.ring,
-              borderColor: faceDetected ? "#4CAF50" : active ? "#ec4899" : "#e5e7eb",
-            }}
-          />
-
-          <div style={styles.faceIndicator}>
-            <div style={{
-              width: 12,
-              height: 12,
-              borderRadius: '50%',
-              backgroundColor: faceDetected ? '#4CAF50' : '#FF5252',
-            }} />
-          </div>
-
-          {isStreaming && (
-            <div style={styles.timerContainer}>
-              <div style={{
-                ...styles.timerBadge,
-                backgroundColor: remainingTime <= 10 ? '#FF5252' : '#2563eb',
-              }}>
-                ⏱️ {remainingTime}s
-              </div>
-            </div>
-          )}
-        </div> */}
 
         <div style={styles.cameraWrapper}>
           <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
@@ -485,6 +544,7 @@ const LivenessVerification = () => {
             </div>
           )}
         </div>
+
         {taskText && (
           <div style={styles.taskSection}>
             <div style={styles.task}>{taskText}</div>
@@ -521,7 +581,6 @@ const LivenessVerification = () => {
     </div>
   );
 };
-
 const styles: any = {
   body: {
     position: "fixed",
